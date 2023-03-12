@@ -1,0 +1,199 @@
+#!/bin/sh
+#xonufr00 Ivan Onufriienko
+export POSIXLY_CORRECT=yes
+export LC_ALL=C
+# Constants
+readonly MOLE_RC="$HOME/.mole_rc"
+readonly EDITOR="${EDITOR:-${VISUAL:-vi}}"
+readonly LOG_DIR="$HOME/.mole"
+usage(){
+    echo "Usage: $(basename "$0") [-h]"
+    echo "       $(basename "$0") [-g GROUP] [FILE]"
+    echo "       $(basename "$0") [-m] [FILTERS] [DIRECTORY] "
+    echo "       $(basename "$0") list [FILTERS] [DIRECTORY] "
+}
+
+open_file() {
+  file="$1"
+  group="$OPTARG"
+  if [ -z "$file" ]; then
+    echo "No file specified."
+    exit 1
+  fi
+  if [ -n "$group" ]; then
+    echo "$(realpath "$file");$group;$(date +"%Y-%m-%d_%H-%M-%S")" >> "$MOLE_RC"
+  else
+    echo "$(realpath "$file");$(date +"%Y-%m-%d_%H-%M-%S")" >> "$MOLE_RC"
+  fi
+  if "$EDITOR" "$file"; then
+    echo "File opened successfully."
+    exit 0
+  else
+    echo "Error opening file."
+    exit 1
+  fi
+}
+
+parse_filter() {
+  group=""
+  before=""
+  after=""
+  while getopts "g:a:b:" opt; do
+    case $opt in
+      g)
+        group=$OPTARG
+        ;;
+      a)
+        before=$OPTARG
+        ;;
+      b)
+        after=$OPTARG
+        ;;
+      *)
+        echo "Invalid option: -$OPTARG" >&2
+        return 1
+        ;;
+    esac
+  done
+  shift $((OPTIND-1))
+  
+  # Validate date format
+if expr "$before" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+  before=$(date -d "$before" +%s)
+elif [ -n "$before" ]; then
+  echo "Invalid date format for -a" >&2
+  return 1
+fi
+
+if expr "$after" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+  after=$(date -d "$after" +%s)
+elif [ -n "$after" ]; then
+  echo "Invalid date format for -b" >&2
+  return 1
+fi
+}
+
+most_opened() {
+  parse_filter "$@"
+  #TODO 
+  file=""
+  # If no directory is specified, the current directory is assumed.
+  if [ $# -eq 0 ]; then
+    dir=$(pwd)
+  else
+    dir="$1"
+  fi
+  # If no filters are specified, list the most opened file.
+  if [ -z "$group" ] && [ -z "$before" ] && [ -z "$after" ]; then
+    # Find the file that has been opened the most number of times.
+    file=$(awk -F ';' '{print $1}' "$MOLE_RC" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+  else
+    # Apply filters to the file list.
+    file_list=$(awk -v group="$group" -v before="$before" -v after="$after" '
+      BEGIN {
+        FS=";"
+        OFS=";"
+      }
+      {
+        if (group == "" || group == $2) {
+          if (before == "" || before >= $3) {
+            if (after == "" || after <= $3) {
+              print $1
+            }
+          }
+        }
+      }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -rn)
+
+    # Find the file that matches the filter and has been opened the most number of times.
+    file=$(echo "$file_list" | head -1 | awk '{ print $2 }')
+
+  fi
+
+  # If no file is found, exit with error.
+  if [ -n "$file" ]; then
+    if [ -f "$file" ]; then
+      open_file "$file"
+    else
+      echo "File not found: $file"
+      exit 1
+    fi
+  else
+    echo "No files found."
+    exit 1
+  fi
+}
+# Function to list files opened (edited) in the given directory
+list_files() {
+  parse_filter "$@"
+  #TODO 
+  # If no directory is specified, the current directory is assumed.
+}         
+
+secret_log() {
+  before=""
+  after=""
+  dirs=""
+
+  # Parse command line arguments
+  while getopts "a:b:" opt; do
+    case $opt in
+      a)
+        before=$OPTARG
+        shift 2
+        ;;
+      b)
+        after=$OPTARG
+        shift 2
+        ;;
+      \?)
+        echo "Invalid option: -$OPTARG" >&2
+        return 1
+        ;;
+      :)
+        echo "Option -$OPTARG requires an argument." >&2
+        return 1
+        ;;
+    esac
+  done
+
+  #TODO 
+
+}
+
+if [ ! -f "$MOLE_RC" ]; then
+  echo "No mole_rc file found."
+  exit 1
+fi
+if [ "$1" = "list" ]; then
+  shift
+  list_files "$@"
+  exit 0 
+elif [ "$1" = "secret-log" ]; then
+  shift
+  secret_log "$@" 
+  exit 0
+elif [ -n "$1" ]; then
+  if [ "$1" = "-m" ]; then
+  shift
+  most_opened "$@"
+  fi
+  while getopts "g:h" opt; do
+  case $opt in
+    h)
+      usage
+      exit 0
+      ;;
+    g)
+      open_file "$OPTARG" "$3"
+      ;;
+    \?)
+      echo "Invalid option" >&2
+      exit 1
+      ;;
+  esac
+  done
+  open_file "$1" 
+else
+  echo "No options, try -h for help"
+  exit 1
+fi
