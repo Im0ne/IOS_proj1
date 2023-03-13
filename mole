@@ -21,7 +21,7 @@ open_file() {
     exit 1
   fi
   if [ -n "$group" ]; then
-    echo "$(realpath "$file");$group;$(date +"%Y-%m-%d_%H-%M-%S")" >> "$MOLE_RC"
+    echo "$(realpath "$file");$(date +"%Y-%m-%d_%H-%M-%S");$group" >> "$MOLE_RC"
   else
     echo "$(realpath "$file");$(date +"%Y-%m-%d_%H-%M-%S")" >> "$MOLE_RC"
   fi
@@ -34,7 +34,7 @@ open_file() {
   fi
 }
 
-parse_filter() {
+most_opened() {
   group=""
   before=""
   after=""
@@ -56,6 +56,7 @@ parse_filter() {
     esac
   done
   shift $((OPTIND-1))
+  echo "$1"
   
   # Validate date format
 if expr "$before" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
@@ -71,13 +72,10 @@ elif [ -n "$after" ]; then
   echo "Invalid date format for -b" >&2
   return 1
 fi
-}
 
-most_opened() {
-  parse_filter "$@"
-  #TODO 
   file=""
   # If no directory is specified, the current directory is assumed.
+  echo "$@"
   if [ $# -eq 0 ]; then
     dir=$(pwd)
   else
@@ -88,6 +86,7 @@ most_opened() {
     # Find the file that has been opened the most number of times.
     file=$(awk -F ';' '{print $1}' "$MOLE_RC" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
   else
+    
     # Apply filters to the file list.
     file_list=$(awk -v group="$group" -v before="$before" -v after="$after" '
       BEGIN {
@@ -95,9 +94,9 @@ most_opened() {
         OFS=";"
       }
       {
-        if (group == "" || group == $2) {
-          if (before == "" || before >= $3) {
-            if (after == "" || after <= $3) {
+        if (group == "" || group == $3) {
+          if (before == "" || before >= $2) {
+            if (after == "" || after <= $2) {
               print $1
             }
           }
@@ -105,7 +104,7 @@ most_opened() {
       }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -rn)
 
     # Find the file that matches the filter and has been opened the most number of times.
-    file=$(echo "$file_list" | head -1 | awk '{ print $2 }')
+    file=$(echo "$file_list" | head -n 1 | awk '{ print $2 }')
 
   fi
 
@@ -124,9 +123,46 @@ most_opened() {
 }
 # Function to list files opened (edited) in the given directory
 list_files() {
-  parse_filter "$@"
+  group=""
+  before=""
+  after=""
+  while getopts "g:a:b:" opt; do
+    case $opt in
+      g)
+        group=$OPTARG
+        ;;
+      a)
+        before=$OPTARG
+        ;;
+      b)
+        after=$OPTARG
+        ;;
+      *)
+        echo "Invalid option: -$OPTARG" >&2
+        return 1
+        ;;
+    esac
+  done
+  shift $((OPTIND-1))
+  echo "$1"
+  
+  # Validate date format
+if expr "$before" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+  before=$(date -d "$before" +%s)
+elif [ -n "$before" ]; then
+  echo "Invalid date format for -a" >&2
+  return 1
+fi
+
+if expr "$after" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+  after=$(date -d "$after" +%s)
+elif [ -n "$after" ]; then
+  echo "Invalid date format for -b" >&2
+  return 1
+fi
   #TODO 
   # If no directory is specified, the current directory is assumed.
+  
 }         
 
 secret_log() {
@@ -156,9 +192,27 @@ secret_log() {
     esac
   done
 
-  #TODO 
+  # Set up awk command to filter results
+  awk_cmd='{if($3 ~ "^/"){sub(/^\.\//,"",$3); print $3}}'
+  if [ ! -z "$dirs" ]; then
+    awk_cmd="$awk_cmd" | awk -v dirs="$dirs" -F '/' 'BEGIN{split(dirs, arr, " ")}{for (d in arr){if ($2 == arr[d]){print;next}}}'
+  fi
+  if [ ! -z "$before" ]; then
+    awk_cmd="$awk_cmd" | awk -v before="$before" -F ';' '{if($2 <= before) print}'
+  fi
+  if [ ! -z "$after" ]; then
+    awk_cmd="$awk_cmd" | awk -v after="$after" -F ';' '{if($2 >= after) print}'
+  fi
 
+  # Run the mole script and save the output
+  output=$(./mole)
+
+  # Filter the output with awk and compress it
+  log_file=".mole/log_$(whoami)_$(date +"%Y-%m-%d_%H-%M-%S").bz2"
+  echo "$output" | awk "$awk_cmd" | sort -u | bzip2 -c > "$log_file"
+  echo "Secret log saved to $log_file"
 }
+
 
 if [ ! -f "$MOLE_RC" ]; then
   echo "No mole_rc file found."
@@ -184,7 +238,7 @@ elif [ -n "$1" ]; then
       exit 0
       ;;
     g)
-      open_file "$OPTARG" "$3"
+      open_file "$3" "$OPTARG" 
       ;;
     \?)
       echo "Invalid option" >&2
