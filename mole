@@ -192,27 +192,9 @@ secret_log() {
     esac
   done
 
-  # Set up awk command to filter results
-  awk_cmd='{if($3 ~ "^/"){sub(/^\.\//,"",$3); print $3}}'
-  if [ ! -z "$dirs" ]; then
-    awk_cmd="$awk_cmd" | awk -v dirs="$dirs" -F '/' 'BEGIN{split(dirs, arr, " ")}{for (d in arr){if ($2 == arr[d]){print;next}}}'
-  fi
-  if [ ! -z "$before" ]; then
-    awk_cmd="$awk_cmd" | awk -v before="$before" -F ';' '{if($2 <= before) print}'
-  fi
-  if [ ! -z "$after" ]; then
-    awk_cmd="$awk_cmd" | awk -v after="$after" -F ';' '{if($2 >= after) print}'
-  fi
+  #TODO 
 
-  # Run the mole script and save the output
-  output=$(./mole)
-
-  # Filter the output with awk and compress it
-  log_file=".mole/log_$(whoami)_$(date +"%Y-%m-%d_%H-%M-%S").bz2"
-  echo "$output" | awk "$awk_cmd" | sort -u | bzip2 -c > "$log_file"
-  echo "Secret log saved to $log_file"
 }
-
 
 if [ ! -f "$MOLE_RC" ]; then
   echo "No mole_rc file found."
