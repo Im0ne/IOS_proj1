@@ -3,9 +3,8 @@
 export POSIXLY_CORRECT=yes
 export LC_ALL=C
 # Constants
-readonly MOLE_RC="$HOME/.mole_rc"
-readonly EDITOR="${EDITOR:-${VISUAL:-vi}}"
-readonly LOG_DIR="$HOME/.mole"
+MOLE_RC="$HOME/.mole_rc"
+EDITOR="${EDITOR:-${VISUAL:-vi}}"
 usage(){
     echo "Usage: $(basename "$0") [-h]"
     echo "       $(basename "$0") [-g GROUP] [FILE]"
@@ -25,6 +24,7 @@ open_file() {
   else
     echo "$(realpath "$file");$(date +"%Y-%m-%d_%H-%M-%S")" >> "$MOLE_RC"
   fi
+  
   if "$EDITOR" "$file"; then
     echo "File opened successfully."
     exit 0
@@ -34,78 +34,87 @@ open_file() {
   fi
 }
 
-most_opened() {
+mole() {
   group=""
-  before=""
-  after=""
-  while getopts "g:a:b:" opt; do
+  BEFORE=""
+  AFTER=""
+  most=false
+  while getopts "g:a:b:m" opt; do
     case $opt in
       g)
         group=$OPTARG
         ;;
       a)
-        before=$OPTARG
+        BEFORE=$OPTARG
         ;;
       b)
-        after=$OPTARG
+        AFTER=$OPTARG
+        ;;
+      m) 
+        most=true
         ;;
       *)
         echo "Invalid option: -$OPTARG" >&2
-        return 1
+        exit 1
         ;;
     esac
   done
   shift $((OPTIND-1))
-  echo "$1"
   
   # Validate date format
-if expr "$before" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-  before=$(date -d "$before" +%s)
-elif [ -n "$before" ]; then
-  echo "Invalid date format for -a" >&2
-  return 1
-fi
+  if expr "$BEFORE" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+    BEFORE=$(date -d "$BEFORE" +%s)
+  elif [ -n "$BEFORE" ]; then
+    echo "Invalid date format for -a" >&2
+    exit 1
+  fi
 
-if expr "$after" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-  after=$(date -d "$after" +%s)
-elif [ -n "$after" ]; then
-  echo "Invalid date format for -b" >&2
-  return 1
-fi
-
+  if expr "$AFTER" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+    AFTER=$(date -d "$AFTER" +%s)
+  elif [ -n "$AFTER" ]; then
+    echo "Invalid date format for -b" >&2
+    exit 1
+  fi
   file=""
+  
   # If no directory is specified, the current directory is assumed.
-  echo "$@"
   if [ $# -eq 0 ]; then
     dir=$(pwd)
   else
     dir="$1"
   fi
+
   # If no filters are specified, list the most opened file.
-  if [ -z "$group" ] && [ -z "$before" ] && [ -z "$after" ]; then
-    # Find the file that has been opened the most number of times.
-    file=$(awk -F ';' '{print $1}' "$MOLE_RC" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
-  else
-    
+  if [ -z "$group" ] && [ -z "$BEFORE" ] && [ -z "$AFTER" ]; then
+    if [ $most = true ]; then
+      file=$(awk -F ';' '{print $1}' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+    elif [ $most = false ]; then
+      file=$(awk -F ';' '{print $1}' "$MOLE_RC" | grep -E "^$dir/.*" | tail -n 1 | awk '{print $1}')
+    fi
+
+  else    
     # Apply filters to the file list.
-    file_list=$(awk -v group="$group" -v before="$before" -v after="$after" '
+    file_list=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" '
       BEGIN {
         FS=";"
         OFS=";"
       }
       {
         if (group == "" || group == $3) {
-          if (before == "" || before >= $2) {
-            if (after == "" || after <= $2) {
+          if (BEFORE == "" || BEFORE >= $2) {
+            if (AFTER == "" || AFTER <= $2) {
               print $1
             }
           }
         }
       }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -rn)
-
     # Find the file that matches the filter and has been opened the most number of times.
-    file=$(echo "$file_list" | head -n 1 | awk '{ print $2 }')
-
+    if [ $most = true ]; then
+      file=$(echo "$file_list" | head -n 1 | awk '{ print $2 }')
+    # Find the file that matches the filter and has been opened the last time.
+    elif [ $most = false ]; then
+      file=$(echo "$file_list" | tail -n 1 | awk '{ print $2 }')
+    fi
   fi
 
   # If no file is found, exit with error.
@@ -121,80 +130,98 @@ fi
     exit 1
   fi
 }
+
 # Function to list files opened (edited) in the given directory
 list_files() {
-  group=""
-  before=""
-  after=""
-  while getopts "g:a:b:" opt; do
-    case $opt in
-      g)
-        group=$OPTARG
-        ;;
-      a)
-        before=$OPTARG
-        ;;
-      b)
-        after=$OPTARG
-        ;;
-      *)
-        echo "Invalid option: -$OPTARG" >&2
-        return 1
-        ;;
-    esac
-  done
-  shift $((OPTIND-1))
-  echo "$1"
-  
-  # Validate date format
-if expr "$before" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-  before=$(date -d "$before" +%s)
-elif [ -n "$before" ]; then
-  echo "Invalid date format for -a" >&2
-  return 1
-fi
+    group=""
+    BEFORE=""
+    AFTER=""
+    while getopts "g:a:b:" opt; do
+      case $opt in
+        g) group="$OPTARG" ;;
+        b) BEFORE="$OPTARG" ;;
+        a) AFTER="$OPTARG" ;;
+        *) echo "Invalid option: -$OPTARG" >&2 
+           exit 1 ;;
+      esac
+    done
+    shift $((OPTIND-1))
 
-if expr "$after" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-  after=$(date -d "$after" +%s)
-elif [ -n "$after" ]; then
-  echo "Invalid date format for -b" >&2
-  return 1
-fi
-  #TODO 
-  # If no directory is specified, the current directory is assumed.
-  
-}         
+    if [ $# -eq 0 ]; then
+      dir=$(pwd)
+    else
+      dir="$1"
+    fi
+
+    if expr "$BEFORE" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+      BEFORE=$(date -d "$BEFORE" +%s)
+    elif [ -n "$BEFORE" ]; then
+      echo "Invalid date format for -a" >&2
+      exit 1
+    fi
+
+    if expr "$AFTER" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+      AFTER=$(date -d "$AFTER" +%s)
+    elif [ -n "$AFTER" ]; then
+      echo "Invalid date format for -b" >&2
+      exit 1
+    fi
+
+    # Group files by name and concatenate their groups
+    file_list=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" -v dir="$dir" '
+      BEGIN {
+        FS=";"
+        OFS=";"
+      }
+      {
+        if (group == "" || group == $3) {
+          if (BEFORE == "" || BEFORE >= $2) {
+            if (AFTER == "" || AFTER <= $2) {
+              print $1, $3
+            }
+          }
+        }   
+      }' "$MOLE_RC" | grep -E "^$dir/.*" | sort)
+#files[$1] = files[$1] $3 " "
+
+    echo "$file_list"
+  }
 
 secret_log() {
-  before=""
-  after=""
-  dirs=""
+    # Parse command line arguments
+    BEFORE="" AFTER="" DIRS=""
+    LOG_DIR="$HOME/.mole"
+    mkdir -p "$LOG_DIR" || { echo "Error: Could not create log directory" >&2; return 1; }
 
-  # Parse command line arguments
-  while getopts "a:b:" opt; do
-    case $opt in
-      a)
-        before=$OPTARG
-        shift 2
-        ;;
-      b)
-        after=$OPTARG
-        shift 2
-        ;;
-      \?)
-        echo "Invalid option: -$OPTARG" >&2
-        return 1
-        ;;
-      :)
-        echo "Option -$OPTARG requires an argument." >&2
-        return 1
-        ;;
-    esac
-  done
+    while getopts ":a:b:" opt; do
+        case ${opt} in
+            a) AFTER="$OPTARG" 
+            ;;
+            b) BEFORE="$OPTARG" 
+            ;;
+            *) if [ -d "$OPTARG" ]; then 
+            DIRS="$OPTARG" 
+            fi
+            ;; 
+        esac
+    done
+    shift $((OPTIND -1))
 
-  #TODO 
+    file_log=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" '
 
+      {        
+          if (BEFORE == "" || BEFORE >= $2) {
+            if (AFTER == "" || AFTER <= $2) {
+              print $1
+            }
+          }
+        
+      }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | sort -rn)
+      echo "$file_log"
+      #pizdec blyat
+      bzip2 -c "$file_log" >> "log_$(whoami)_$(date +%Y-%m-%d_%H-%M-%S).bz2"
 }
+
 
 if [ ! -f "$MOLE_RC" ]; then
   echo "No mole_rc file found."
@@ -210,8 +237,7 @@ elif [ "$1" = "secret-log" ]; then
   exit 0
 elif [ -n "$1" ]; then
   if [ "$1" = "-m" ]; then
-  shift
-  most_opened "$@"
+  mole "$@"
   fi
   while getopts "g:h" opt; do
   case $opt in
@@ -228,8 +254,11 @@ elif [ -n "$1" ]; then
       ;;
   esac
   done
-  open_file "$1" 
+  if [ -d "$1" ]; then
+    mole "$@"
+  else 
+  open_file "$@" 
+  fi
 else
-  echo "No options, try -h for help"
-  exit 1
+  open_file "$@"
 fi
