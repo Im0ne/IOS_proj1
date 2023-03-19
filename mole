@@ -5,6 +5,9 @@ export LC_ALL=C
 # Constants
 MOLE_RC="$HOME/.mole_rc"
 EDITOR="${EDITOR:-${VISUAL:-vi}}"
+
+command -v realpath >/dev/null 2>&1 || { echo >&2 "The realpath utility is not available on this machine."; exit 1; }
+
 usage(){
     echo "Usage: $(basename "$0") [-h]"
     echo "       $(basename "$0") [-g GROUP] [FILE]"
@@ -26,7 +29,6 @@ open_file() {
   fi
   
   if "$EDITOR" "$file"; then
-    echo "File opened successfully."
     exit 0
   else
     echo "Error opening file."
@@ -41,27 +43,16 @@ mole() {
   most=false
   while getopts "g:a:b:m" opt; do
     case $opt in
-      g)
-        group=$OPTARG
-        ;;
-      a)
-        BEFORE=$OPTARG
-        ;;
-      b)
-        AFTER=$OPTARG
-        ;;
-      m) 
-        most=true
-        ;;
-      *)
-        echo "Invalid option: -$OPTARG" >&2
-        exit 1
-        ;;
+      g) group=$OPTARG ;;
+      a) BEFORE=$OPTARG ;;
+      b) AFTER=$OPTARG ;;
+      m) most=true ;;
+      *) echo "Invalid option: -$OPTARG" >&2
+        exit 1 ;;
     esac
   done
   shift $((OPTIND-1))
-  
-  # Validate date format
+
   if expr "$BEFORE" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
     BEFORE=$(date -d "$BEFORE" +%s)
   elif [ -n "$BEFORE" ]; then
@@ -77,14 +68,12 @@ mole() {
   fi
   file=""
   
-  # If no directory is specified, the current directory is assumed.
   if [ $# -eq 0 ]; then
     dir=$(pwd)
   else
     dir="$1"
   fi
 
-  # If no filters are specified, list the most opened file.
   if [ -z "$group" ] && [ -z "$BEFORE" ] && [ -z "$AFTER" ]; then
     if [ $most = true ]; then
       file=$(awk -F ';' '{print $1}' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
@@ -93,7 +82,6 @@ mole() {
     fi
 
   else    
-    # Apply filters to the file list.
     file_list=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" '
       BEGIN {
         FS=";"
@@ -108,22 +96,19 @@ mole() {
           }
         }
       }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | uniq -c | sort -rn)
-    # Find the file that matches the filter and has been opened the most number of times.
+
     if [ $most = true ]; then
       file=$(echo "$file_list" | head -n 1 | awk '{ print $2 }')
-    # Find the file that matches the filter and has been opened the last time.
     elif [ $most = false ]; then
       file=$(echo "$file_list" | tail -n 1 | awk '{ print $2 }')
     fi
   fi
 
-  # If no file is found, exit with error.
   if [ -n "$file" ]; then
     if [ -f "$file" ]; then
       open_file "$file"
     else
-      echo "File not found: $file"
-      exit 1
+      mole "$file"
     fi
   else
     echo "No files found."
@@ -131,100 +116,140 @@ mole() {
   fi
 }
 
-# Function to list files opened (edited) in the given directory
 list_files() {
-    group=""
-    BEFORE=""
-    AFTER=""
-    while getopts "g:a:b:" opt; do
-      case $opt in
-        g) group="$OPTARG" ;;
-        b) BEFORE="$OPTARG" ;;
-        a) AFTER="$OPTARG" ;;
-        *) echo "Invalid option: -$OPTARG" >&2 
-           exit 1 ;;
-      esac
-    done
-    shift $((OPTIND-1))
+  group=""
+  BEFORE=""
+  AFTER=""
+  while getopts "g:a:b:" opt; do
+    case $opt in
+      g) group="$OPTARG" ;;
+      b) BEFORE="$OPTARG" ;;
+      a) AFTER="$OPTARG" ;;
+      *) echo "Invalid option: -$OPTARG" >&2 
+         exit 1 ;;
+    esac
+  done
+  shift $((OPTIND-1))
 
-    if [ $# -eq 0 ]; then
-      dir=$(pwd)
-    else
-      dir="$1"
-    fi
+  if [ $# -eq 0 ]; then
+    dir=$(pwd)
+  else
+    dir="$1"
+  fi
 
-    if expr "$BEFORE" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-      BEFORE=$(date -d "$BEFORE" +%s)
-    elif [ -n "$BEFORE" ]; then
-      echo "Invalid date format for -a" >&2
-      exit 1
-    fi
+  if expr "$BEFORE" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+    BEFORE=$(date -d "$BEFORE" +%s)
+  elif [ -n "$BEFORE" ]; then
+    echo "Invalid date format for -a" >&2
+    exit 1
+  fi
 
-    if expr "$AFTER" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
-      AFTER=$(date -d "$AFTER" +%s)
-    elif [ -n "$AFTER" ]; then
-      echo "Invalid date format for -b" >&2
-      exit 1
-    fi
+  if expr "$AFTER" : '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}$' > /dev/null; then
+    AFTER=$(date -d "$AFTER" +%s)
+  elif [ -n "$AFTER" ]; then
+    echo "Invalid date format for -b" >&2
+    exit 1
+  fi
 
-    # Group files by name and concatenate their groups
-    file_list=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" -v dir="$dir" '
-      BEGIN {
-        FS=";"
-        OFS=";"
-      }
-      {
-        if (group == "" || group == $3) {
-          if (BEFORE == "" || BEFORE >= $2) {
-            if (AFTER == "" || AFTER <= $2) {
-              print $1, $3
-            }
-          }
-        }   
-      }' "$MOLE_RC" | grep -E "^$dir/.*" | sort)
-#files[$1] = files[$1] $3 " "
-
-    echo "$file_list"
+  file_list=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" -v dir="$dir" '
+  BEGIN {
+    FS=";"
+    OFS=";"
+    
   }
+  {
+    
 
-secret_log() {
-    # Parse command line arguments
-    BEFORE="" AFTER="" DIRS=""
-    LOG_DIR="$HOME/.mole"
-    mkdir -p "$LOG_DIR" || { echo "Error: Could not create log directory" >&2; return 1; }
-
-    while getopts ":a:b:" opt; do
-        case ${opt} in
-            a) AFTER="$OPTARG" 
-            ;;
-            b) BEFORE="$OPTARG" 
-            ;;
-            *) if [ -d "$OPTARG" ]; then 
-            DIRS="$OPTARG" 
-            fi
-            ;; 
-        esac
-    done
-    shift $((OPTIND -1))
-
-    file_log=$(awk -v group="$group" -v BEFORE="$BEFORE" -v AFTER="$AFTER" '
-
-      {        
-          if (BEFORE == "" || BEFORE >= $2) {
-            if (AFTER == "" || AFTER <= $2) {
-              print $1
+      if (group == "" || group == $3) {
+        if (BEFORE == "" || BEFORE >= $2) {
+          if (AFTER == "" || AFTER <= $2) {
+            if (files[$1] == "") {
+              files[$1] = $3
+            } else {
+              files[$1] = files[$1] "," $3
+            }
+            for (file in files) {
+              cmd = "basename \"" file "\""
+              cmd | getline basename
+              close(cmd)
+              if (indent < length(basename)) {
+                indent = length(basename)+1
+              }
             }
           }
-        
-      }' "$MOLE_RC" | grep -E "^$dir/.*" | sort | sort -rn)
-      echo "$file_log"
-      #pizdec blyat
-      bzip2 -c "$file_log" >> "log_$(whoami)_$(date +%Y-%m-%d_%H-%M-%S).bz2"
+        }
+      }   
+    
+  }
+  END {
+    for (file in files) {
+      cmd = "basename \"" file "\""
+      cmd | getline basename
+      close(cmd)
+      printf "%s:%*s%s\n", basename, indent - length(basename) , "", files[file] == "" ? "-" : substr(files[file], 1, length(files[file])-1)
+    }
+  }' "$MOLE_RC" | sort -n )
+
+  echo "$file_list"
 }
 
+secret_log() {
+  BEFORE="" AFTER="" DIR=""
+  LOG_DIR="$HOME/.mole"
+  mkdir -p "$LOG_DIR" || { echo "Error: Could not create log directory" >&2; exit 1; }
+
+  while getopts ":a:b:" opt; do
+      case ${opt} in
+          a) AFTER="$OPTARG" ;;
+          b) BEFORE="$OPTARG" ;;
+          *) if [ -d "$OPTARG" ]; then 
+              DIR="$OPTARG" 
+             else 
+              echo "Invalid option: -$OPTARG" >&2
+              exit 1
+             fi ;; 
+      esac
+  done
+  shift $((OPTIND -1))
+  
+  if expr "$BEFORE" : '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$' > /dev/null; then
+    BEFORE=$(date -d "$BEFORE" +%s)
+  elif [ -n "$BEFORE" ]; then
+    echo "Invalid date format for -a" >&2
+    exit 1
+  fi
+
+  if expr "$AFTER" : '^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}$' > /dev/null; then
+    AFTER=$(date -d "$AFTER" +%s)
+  elif [ -n "$AFTER" ]; then
+    echo "Invalid date format for -b" >&2
+    exit 1
+  fi
+  # Get list of files opened with mole from mole_rc file
+  FILES=$(grep -E "^$DIR/.*;[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}" "$MOLE_RC" | cut -d';' -f1 | sort -u )
+
+  # Filter files by before and after dates if specified
+  if [ -n "$BEFORE" ]; then
+    FILES=$(echo "$FILES" | xargs stat -f '%a %N' | awk -v before="$BEFORE" '$1 < strftime("%s", before) {print $2}')
+  fi
+  if [ -n "$AFTER" ]; then
+    FILES=$(echo "$FILES" | xargs stat -f '%a %N' | awk -v after="$AFTER" '$1 > strftime("%s", after) {print $2}')
+  fi
+
+  # Log files to secret log
+  LOG_FILE="$LOG_DIR/log_$(whoami)_$(date +%Y-%m-%d_%H-%M-%S)"
+  for FILE in $FILES; do
+      FILE_PATH=$(realpath "$FILE")
+      FILE_OPEN_TIMES=$(grep "^$FILE_PATH;" "$MOLE_RC" | cut -d';' -f2- | cut -d';' -f1 | tr '\n' ';' | sed 's/;$//')
+      printf "%s;%s\n" "$FILE_PATH" "$FILE_OPEN_TIMES" >> "$LOG_FILE"
+  done
+
+  # Compress secret log with bzip2
+  bzip2 "$LOG_FILE"
+}
 
 if [ ! -f "$MOLE_RC" ]; then
-  echo "No mole_rc file found."
+  echo "No mole_rc file found." >&2
   exit 1
 fi
 if [ "$1" = "list" ]; then
@@ -236,29 +261,21 @@ elif [ "$1" = "secret-log" ]; then
   secret_log "$@" 
   exit 0
 elif [ -n "$1" ]; then
-  if [ "$1" = "-m" ]; then
+  if [ "$1" = "-m" ] || [ -d "$1" ]; then
   mole "$@"
   fi
-  while getopts "g:h" opt; do
+  while getopts "g:hab" opt; do
   case $opt in
-    h)
-      usage
-      exit 0
-      ;;
-    g)
-      open_file "$3" "$OPTARG" 
-      ;;
-    \?)
-      echo "Invalid option" >&2
-      exit 1
-      ;;
+    h) usage
+      exit 0 ;;
+    g) open_file "$3" "$OPTARG" ;;
+    a) mole "$@" ;;
+    b) mole "$@" ;;
+    \?) echo "Invalid option" >&2
+        exit 1 ;;
   esac
   done
-  if [ -d "$1" ]; then
-    mole "$@"
-  else 
-  open_file "$@" 
-  fi
-else
   open_file "$@"
+else
+  mole 
 fi
